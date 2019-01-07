@@ -1,0 +1,14 @@
+vises, springs neck = 30$
+bois = 30$
+hicu =
+mosfet =
+power supply =
+pickup (x2) =
+strings (x12) =
+1/4 female (x2) = 
+tuning pegs (x12) = 
+coil (x12) = 7.40$
+smd led (x12) = 7.70$
+connecteur pour power supply female = ?
++ shipping = 8.00$
++ taxes

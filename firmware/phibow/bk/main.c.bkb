@@ -1,0 +1,664 @@
+#define F_CPU 16000000UL
+//#define DEBUG
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/pgmspace.h>
+
+
+#include <avr/wdt.h>
+
+#include <util/delay.h>
+#include <string.h>
+
+#include "usbdrv.h"
+#include "description.h"
+#include "touch.h"
+
+static uchar sendEmptyFrame;
+static uchar tuning432;
+
+////////////////////////////////////////////////////////////////////////
+// TODO
+////////////////////////////////////////////////////////////////////////
+// adding a switch to use 440 or 432
+// random / markov
+// mosfet circuit + 5v regulation standalone
+// slider to fine tuned
+// octave midi got it wrong...
+
+// fn = f0 * (a)n 
+// 12 root of 2 = 1.05946309436
+// 440/432 * (1.05946309436)3
+// http://shakahara.com/pianopitch2.php
+
+
+////////////////////////////////////////////////////////////////////////
+// IO
+////////////////////////////////////////////////////////////////////////
+// 
+/*
+--------COILS / PWM ---------
+1 - PB5 (OC1A)
+2 - PH6 (OC2B)
+3 - PB6 (OC1B)
+4 - PE3 (OC3A)
+5 - PB4 (OC2A)
+6 - PE4 (OC3B)
+7 - PH3 (OC4A)
+8 - PH4  (OC4B)
+9 - PL3 (OC5A)
+10 - PG5 (OC0B)
+11 - PB7 (OC0A)
+12 - PL4 (OC5B)
+
+--------LEDS---------
+1 - PA0
+2 - PA1
+3 - PA2
+4 - PA3
+5 - PA4
+6 - PA5
+7 - PA6
+8 - PA7
+9 - PC0
+10 - PC1
+11 - PC2
+12 - PC3
+
+--------MOSFET---------
+1 - PJ0
+2 - PJ1
+3 - PJ2
+4 - PJ3
+5 - PJ4
+6 - PJ5
+7 - PJ6
+8 - PJ7
+9 - PC4
+10 - PC5
+11 - PC6
+12 - PC7
+
+--------PIANO (SCREW) ADC / TOUCH---------
+1 - PF0
+2 - PF1
+3 - PF2
+4 - PF3
+5 - PF4
+6 - PF5
+7 - PF6
+8 - PF7
+9 - PK0
+10 - PK1
+11 - PK2
+12 - PK3
+
+--------SLIDER FINE-TUNE---------
+PK4
+
+--------SWITCH---------
+440vs432 - PG0
+random/generative - PG1
+*/
+
+
+
+
+/*
+432hz
+pitch 1 is 27.0000 
+pitch 2 is 28.6055 
+pitch 3 is 30.3065 
+pitch 4 is 32.1086 
+pitch 5 is 34.0179 
+pitch 6 is 36.0407 
+pitch 7 is 38.1838 
+pitch 8 is 40.4543 
+pitch 9 is 42.8598 
+pitch 10 is 45.4084 
+pitch 11 is 48.1085 
+pitch 12 is 50.9692 
+pitch 13 is 54.0000 
+pitch 14 is 57.2110 
+pitch 15 is 60.6130 
+pitch 16 is 64.2172 
+pitch 17 is 68.0357 
+pitch 18 is 72.0814 
+pitch 19 is 76.3675 
+pitch 20 is 80.9086 
+pitch 21 is 85.7197 
+pitch 22 is 90.8168 
+pitch 23 is 96.2171 
+pitch 24 is 101.938 
+pitch 25 is 108.000 
+pitch 26 is 114.422 
+pitch 27 is 121.226 
+pitch 28 is 128.434 
+pitch 29 is 136.071 
+pitch 30 is 144.163 
+pitch 31 is 152.735 
+pitch 32 is 161.817 
+pitch 33 is 171.439 
+pitch 34 is 181.634 
+pitch 35 is 192.434 
+pitch 36 is 203.877 - C2
+pitch 37 is 216.000 
+pitch 38 is 228.844 
+pitch 39 is 242.452 
+pitch 40 is 256.869 
+pitch 41 is 272.143 
+pitch 42 is 288.325 
+pitch 43 is 305.470 
+pitch 44 is 323.634 
+pitch 45 is 342.879 
+pitch 46 is 363.267 
+pitch 47 is 384.868 
+pitch 48 is 407.754 - C3
+pitch 49 is 432.000 
+pitch 50 is 457.688 
+pitch 51 is 484.904 
+pitch 52 is 513.737 
+pitch 53 is 544.286 
+pitch 54 is 576.651 
+pitch 55 is 610.940 
+pitch 56 is 647.269 
+pitch 57 is 685.757 
+pitch 58 is 726.535 
+pitch 59 is 769.736 
+pitch 60 is 815.507 
+pitch 61 is 864.000 
+pitch 62 is 915.376 
+pitch 63 is 969.807 
+pitch 64 is 1027.47 
+pitch 65 is 1088.57 
+pitch 66 is 1153.30 
+pitch 67 is 1221.88 
+pitch 68 is 1294.54 
+pitch 69 is 1371.51 
+pitch 70 is 1453.07 
+pitch 71 is 1539.47 
+pitch 72 is 1631.01 
+pitch 73 is 1728.00 
+pitch 74 is 1830.75 
+pitch 75 is 1939.61 
+pitch 76 is 2054.95 
+pitch 77 is 2177.14 
+pitch 78 is 2306.60 
+pitch 79 is 2443.76 
+pitch 80 is 2589.07 
+pitch 81 is 2743.03 
+pitch 82 is 2906.14 
+pitch 83 is 3078.95 
+pitch 84 is 3262.03 
+pitch 85 is 3456.00 
+pitch 86 is 3661.50 
+pitch 87 is 3879.23 
+pitch 88 is 4109.90 
+
+440hz
+pitch 1 is 27.5000 
+pitch 2 is 29.1352 
+pitch 3 is 30.8677 
+pitch 4 is 32.7032 
+pitch 5 is 34.6478 
+pitch 6 is 36.7081 
+pitch 7 is 38.8909 
+pitch 8 is 41.2034 
+pitch 9 is 43.6535 
+pitch 10 is 46.2493 
+pitch 11 is 48.9994 
+pitch 12 is 51.9131 
+pitch 13 is 55.0000 
+pitch 14 is 58.2705 
+pitch 15 is 61.7354 
+pitch 16 is 65.4064 
+pitch 17 is 69.2957 
+pitch 18 is 73.4162 
+pitch 19 is 77.7817 
+pitch 20 is 82.4069 
+pitch 21 is 87.3071 
+pitch 22 is 92.4986 
+pitch 23 is 97.9989 
+pitch 24 is 103.826 
+pitch 25 is 110.000 
+pitch 26 is 116.541 
+pitch 27 is 123.471 
+pitch 28 is 130.813 
+pitch 29 is 138.591 
+pitch 30 is 146.832 
+pitch 31 is 155.563 
+pitch 32 is 164.814 
+pitch 33 is 174.614 
+pitch 34 is 184.997 
+pitch 35 is 195.998 
+pitch 36 is 207.652 
+pitch 37 is 220.000 
+pitch 38 is 233.082 
+pitch 39 is 246.942 
+pitch 40 is 261.626 
+pitch 41 is 277.183 
+pitch 42 is 293.665 
+pitch 43 is 311.127 
+pitch 44 is 329.628 
+pitch 45 is 349.228 
+pitch 46 is 369.994 
+pitch 47 is 391.995 
+pitch 48 is 415.305 
+pitch 49 is 440.000 
+pitch 50 is 466.164 
+pitch 51 is 493.883 
+pitch 52 is 523.251 
+pitch 53 is 554.365 
+pitch 54 is 587.330 
+pitch 55 is 622.254 
+pitch 56 is 659.255 
+pitch 57 is 698.456 
+pitch 58 is 739.989 
+pitch 59 is 783.991 
+pitch 60 is 830.609 
+pitch 61 is 880.000 
+pitch 62 is 932.328 
+pitch 63 is 987.767 
+pitch 64 is 1046.50 
+pitch 65 is 1108.73 
+pitch 66 is 1174.66 
+pitch 67 is 1244.51 
+pitch 68 is 1318.51 
+pitch 69 is 1396.91 
+pitch 70 is 1479.98 
+pitch 71 is 1567.98 
+pitch 72 is 1661.22 
+pitch 73 is 1760.00 
+pitch 74 is 1864.66 
+pitch 75 is 1975.53 
+pitch 76 is 2093.00 
+pitch 77 is 2217.46 
+pitch 78 is 2349.32 
+pitch 79 is 2489.02 
+pitch 80 is 2637.02 
+pitch 81 is 2793.83 
+pitch 82 is 2959.96 
+pitch 83 is 3135.96 
+pitch 84 is 3322.44 
+pitch 85 is 3520.00 
+pitch 86 is 3729.31 
+pitch 87 is 3951.07 
+pitch 88 is 4186.01  
+ */
+	
+////////////////////////////////////////////////////////////////////////
+// INIT
+////////////////////////////////////////////////////////////////////////
+static void USBConf(void)
+{
+	uchar i, j;
+
+	/* activate pull-ups except on USB lines */
+	USB_CFG_IOPORT =
+	    (uchar) ~ ((1 << USB_CFG_DMINUS_BIT) |
+		       (1 << USB_CFG_DPLUS_BIT));
+	/* all pins input except USB (-> USB reset) */
+#ifdef USB_CFG_PULLUP_IOPORT	/* use usbDeviceConnect()/usbDeviceDisconnect() if available */
+	USBDDR = 0;		/* we do RESET by deactivating pullup */
+	usbDeviceDisconnect();
+#else
+	USBDDR = (1 << USB_CFG_DMINUS_BIT) | (1 << USB_CFG_DPLUS_BIT);
+#endif
+
+	j = 0;
+	while (--j) {		/* USB Reset by device only required on Watchdog Reset */
+		i = 0;
+		while (--i);	/* delay >10ms for USB reset */
+	}
+#ifdef USB_CFG_PULLUP_IOPORT
+	usbDeviceConnect();
+#else
+	USBDDR = 0;		/*  remove USB reset condition */
+#endif
+}
+
+void IOConf()
+{
+	// PWM - output
+	DDRB = 0xFF;
+	DDRG = 0xFF;
+	DDRH = 0xFF;
+	DDRE = 0xFF;
+	DDRL = 0xFF;
+	
+	// LED - output
+	DDRA = 0xFF;
+	DDRC = 0xFF;
+	
+	// MOSFET - output + PC4/7
+	DDRJ = 0XFF;
+	
+	// SWITCH - input PG5 is PWM
+	DDRG = 0x20;
+	PORTG = 0x1F; // pull-up enable
+	
+	// ANALOG - input
+	DDRF = 0x00;
+	DDRK = 0x00;
+}
+
+/*
+int freq2Top(float frequency, int prescaler)
+{
+	return (F_CPU / (prescaler * frequency)) - 1;
+}
+*/
+
+
+/*
+// initialize timer, interrupt and variable
+void timer1_init()
+{   
+	TCCR0A |= (1<<WGM01) | (1<<COM0A0 );
+	TCCR0B |= (1<<CS02) | (1<<CS00);
+    // initialize counter
+    TCNT0 = 0;
+ 
+    // initialize compare value
+    OCR0A = 128;
+ 
+    // enable compare interrupt
+    TIMSK0 |= (1 << OCIE0A);
+}
+ */
+
+ 
+
+
+void PWMConf()
+{
+	// frequency = clock / (prescaler * (1+top))
+	// top = (clock / (prescaler * frequency))-1
+	
+	/*
+	//Timer 0 | 8bit | prescaler 1024
+	TCCR0A |= (1<<WGM01) | (1<<WGM00) | (1<<COM0A1) | (1<<COM0B1);
+	TCCR0B |= (1<<CS02) | (1<<CS00);
+	ICR0 = 238; // 36 - 65.4064 - 440
+	ICR0 = 242; // 36 - 64.2172 - 442
+	ICR0 = 224; // 37 - 69.2957 - 440
+	ICR0 = 229; // 37 - 68.0357 - 442
+	OCR1A = ICR0 / 2;
+	OCR0B = ICR0 / 2;
+	//OCRx //ICR capturing...
+	*/
+	//Timer 1 | 16bit | prescaler 8
+	TCCR1A |= (1<<WGM11) | (1<<COM1A1) | (1<<COM1B1);
+	TCCR1B |= (1<<WGM13) | (1<<WGM12)  | (1<<CS11);
+	ICR1 = 9088;
+	OCR1A = 500; // c - 130.813 -- 28
+	OCR1B = 2500; //d - 146.832 -- 30
+	//OCR1A = 7644; // c - 261.626 -- 40
+	//OCR1B = 7214; //c# - 277.183 -- 41
+	
+	//Timer 2 | 8bit | prescaler 1024
+	TCCR2A |= (1<<WGM21) | (1<<WGM20) | (1<<COM2A1) | (1<<COM2B1);
+	TCCR2B |= (1<<CS22) | (1<<CS21) | (1<<CS20);
+	OCR2A = 94; // e - 164.814 -- 32
+	OCR2B = 112; //c# - 138.591 -- 29
+	//OCR2A = 49; // d# - 311.127 -- 43
+	//OCR2B = 52; //d - 293.665 -- 42
+	
+	//Timer 3 | 16bit | prescaler 8
+	TCCR3A |= (1<<WGM31) | (1<<COM3A1) | (1<<COM3B1);
+	TCCR3B |= (1<<WGM33) | (1<<WGM32)  | (1<<CS31);
+	ICR3 = 65535;
+	OCR3A = 12856; // d# - 155.563 -- 31
+	OCR3B = 11453; //f - 174.614 -- 33
+	//OCR3A = 6066; // e - 329.628 -- 44
+	//OCR3B = 5726; //f - 349.228 -- 45
+	
+	//Timer 4 | 16bit | prescaler 8
+	TCCR4A |= (1<<WGM41) | (1<<COM4A1) | (1<<COM4B1);
+	TCCR4B |= (1<<WGM43) | (1<<WGM42)  | (1<<CS41);
+	ICR4 = 65535;
+	OCR4A = 10810; // f# - 184.997 -- 34
+	OCR4B = 10203; //g - 195.998 -- 35
+	//OCR4A = 4815; // g# - 415.305 -- 48
+	//OCR4B = 4544; //a - 440 -- 49
+
+	//Timer 5 | 16bit | prescaler 8
+	TCCR5A |= (1<<WGM51) | (1<<COM5A1) | (1<<COM5B1);
+	TCCR5B |= (1<<WGM53) | (1<<WGM52)  | (1<<CS51);
+	ICR5 = 65535;
+	OCR5A = 9630; // g# - 207.652 -- 36
+	OCR5B = 8098; //b - 246.942	-- 39
+	//OCR5A = 4289; // a# - 466.164 -- 50
+	//OCR5B = 4049; //b - 493.883	-- 51
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// CAPACITIVE TOUCH on ADC
+/////////////////////////////////////////////////////////////////////////////////////////////////
+static touch_channel_t btn11 = { .mux = 3, .port = &PORTK, .portmask = (1<<PK3), .min = 700, .max = 1024 };
+static touch_channel_t btn10 = { .mux = 2, .port = &PORTK, .portmask = (1<<PK2), .min = 700, .max = 1024 };
+static touch_channel_t btn9 = { .mux = 1, .port = &PORTK, .portmask = (1<<PK1), .min = 700, .max = 1024 };
+static touch_channel_t btn8 = { .mux = 0, .port = &PORTK, .portmask = (1<<PK0), .min = 700, .max = 1024 };
+static touch_channel_t btn7 = { .mux = 7, .port = &PORTF, .portmask = (1<<PF7), .min = 700, .max = 1024 };
+static touch_channel_t btn6 = { .mux = 6, .port = &PORTF, .portmask = (1<<PF6), .min = 700, .max = 1024 };
+static touch_channel_t btn5 = { .mux = 5, .port = &PORTF, .portmask = (1<<PF5), .min = 700, .max = 1024 };
+static touch_channel_t btn4 = { .mux = 4, .port = &PORTF, .portmask = (1<<PF4), .min = 700, .max = 1024 };
+static touch_channel_t btn3 = { .mux = 3, .port = &PORTF, .portmask = (1<<PF3), .min = 700, .max = 1024 };
+static touch_channel_t btn2 = { .mux = 2, .port = &PORTF, .portmask = (1<<PF2), .min = 700, .max = 1024 };
+static touch_channel_t btn1 = { .mux = 1, .port = &PORTF, .portmask = (1<<PF1), .min = 700, .max = 1024 };
+static touch_channel_t btn0 = { .mux = 0, .port = &PORTF, .portmask = (1<<PF0), .min = 700, .max = 1024 };
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// UTIL
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// octave -1 (28-39)
+// octave (40-51)
+void parseMidiMessage(uchar *data, uchar len) {
+	uchar cin = (*data) & 0x0f;
+	uchar Rch = (*(data+1)) & 0x0f;
+	uchar note = *(data+2);
+	// velocity *(data + 3)
+	// PBBuf = (*(data + 3)) & 0x7f; /* use only MSB(7bit) */
+	
+	if (Rch != 0)
+		return;
+
+	switch(cin) {
+		case 8:	/* NOTE OFF */
+				PORTC |= (1 << PINC1);
+		break;
+		case 9:	/* NOTE ON */
+			if( *(data + 3) == 0){
+				PORTC |= (1 << PINC1);
+			} else {
+				if(note == 48) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 49) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 50) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 51) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 52) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 53) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 54) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 55) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 56) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 57) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 58) {
+					PORTC &= ~(1 << PINC1);
+				} else if(note == 59) {
+					PORTC &= ~(1 << PINC1);
+				}
+			}
+		break;
+	}
+
+	if (len > 4) {
+		parseMidiMessage(data+4, len-4);
+	}
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+// USB<->MIDI
+/////////////////////////////////////////////////////////////////////////////////////////////////
+uchar usbFunctionDescriptor(usbRequest_t * rq)
+{
+	if (rq->wValue.bytes[1] == USBDESCR_DEVICE) {
+		usbMsgPtr = (uchar *) deviceDescrMIDI;
+		return sizeof(deviceDescrMIDI);
+	} else {
+		usbMsgPtr = (uchar *) configDescrMIDI;
+		return sizeof(configDescrMIDI);
+	}
+}
+
+uchar usbFunctionSetup(uchar data[8])
+{
+	usbRequest_t *rq = (void *) data;
+	if ((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {
+		if ((rq->bmRequestType & USBRQ_DIR_MASK) ==
+		    USBRQ_DIR_HOST_TO_DEVICE)
+			sendEmptyFrame = 1;
+	}
+	return 0xff;
+}
+
+void usbFunctionWriteOut(uchar * data, uchar len) // from computer
+{
+	parseMidiMessage(data, len);
+}
+
+uchar usbFunctionWrite(uchar * data, uchar len)
+{
+	return 1;
+}
+
+uchar usbFunctionRead(uchar * data, uchar len)
+{
+	return 7;
+}
+
+
+
+////////////////////////////////////////////////////////////////////////
+// MAIN
+////////////////////////////////////////////////////////////////////////
+int main(void)
+{
+	IOConf();
+	PWMConf();
+	//timer1_init();
+	USBConf();
+	usbInit();
+	touch_init();
+	sei();
+	
+	uchar midiMsg[8];
+	uchar iii;
+    uint16_t i = 0;
+    uint16_t sample[12];
+
+	sendEmptyFrame = 0;
+	
+	//int j = 0;
+	
+	for (;;) {		/* main event loop */
+		usbPoll();
+		iii = 0;
+		i++;
+		
+		// check switch if we want tuning in 432hz instead of 440hz
+        tuning432 = !(PINJ & (1<<PINJ0)) ? 1 : 0;
+        #ifdef DEBUG 
+			if(tuning432) {
+				PORTA &= ~(1 << PINA0);
+			} else {
+				PORTA |= (1 << PINA0);
+			}
+		#endif
+		
+		// capacitive touch reading
+		
+
+			
+        if (i>10000) {
+			/*
+			OCR0A = j++;
+			if(j >254) {
+				j = 0;
+			}
+			*/
+			
+            sample[0] = touch_measure(&btn0);
+            sample[1] = touch_measure(&btn1);
+            sample[2] = touch_measure(&btn2);
+            sample[3] = touch_measure(&btn3);
+            sample[4] = touch_measure(&btn4);
+            sample[5] = touch_measure(&btn5);
+            sample[6] = touch_measure(&btn6);
+            sample[7] = touch_measure(&btn7);
+            sample[8] = touch_measure(&btn8);
+            sample[9] = touch_measure(&btn9);
+            sample[10] = touch_measure(&btn10);
+            sample[11] = touch_measure(&btn11);
+       
+            if(sample[0] > 790) {
+				PORTA |= (1 << PINA0);
+				PORTJ |= (1 << PINJ0);
+			} else {
+				PORTA &= ~(1 << PINA0);
+				PORTJ &= ~(1 << PINJ0);
+				
+			}
+    
+            i=0;
+        }
+        
+        
+		
+        // sending to midi to pc
+		if (usbInterruptIsReady()) {
+			//if(!(PINJ & (1<<PINJ0))) {
+				midiMsg[iii++] = 0x08;
+				midiMsg[iii++] = 0x80;
+				midiMsg[iii++] = 55;
+				midiMsg[iii++] = 0x00;
+				midiMsg[iii++] = 0x09;
+				midiMsg[iii++] = 0x90;
+				midiMsg[iii++] = 77;
+				midiMsg[iii++] = 0x7f;
+				if (8 == iii) {
+					sendEmptyFrame = 1;
+				} else {
+					sendEmptyFrame = 0;
+				}
+				usbSetInterrupt(midiMsg, iii);
+			//}
+		}
+	}
+	return 0;
+}
+
+ISR (TIMER0_COMPA_vect)
+{
+	
+    // toggle led here
+    PORTA ^= (1 << 0);
+{
+

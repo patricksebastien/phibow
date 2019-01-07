@@ -1,0 +1,15 @@
+EESchema-LIBRARY Version 2.3  Date: 3/25/2014 12:55:01 PM
+#encoding utf-8
+#
+# CPE
+#
+DEF CPE U 0 40 Y Y 1 F N
+F0 "U" 0 0 60 H V C CNN
+F1 "CPE" 0 0 60 H V C CNN
+F2 "~" 0 0 60 H V C CNN
+F3 "~" 0 0 60 H V C CNN
+DRAW
+ENDDRAW
+ENDDEF
+#
+#End Library
